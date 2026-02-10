@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breezy Birdie: Sound Scout</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+
+    <style>
+        body {
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            text-align: center;
+            background-color: #e0f7fa;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #camera-feed {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 220px;
+            height: 165px;
+            border-radius: 15px;
+            border: 4px solid white;
+            background: #000;
+            z-index: 5;
+        }
+        #word-card {
+            background: white;
+            padding: 40px;
+            border-radius: 40px;
+            box-shadow: 0 10px 0 #81d4fa;
+            width: 85%;
+            max-width: 500px;
+            z-index: 10;
+            transition: background-color 0.3s;
+        }
+        .emoji { font-size: 140px; margin: 0; }
+        .word-reveal { 
+            font-size: 50px; 
+            color: #0277bd; 
+            font-weight: bold; 
+            margin: 10px 0;
+            visibility: hidden; /* Hidden until answer */
+        }
+        .instructions {
+            display: flex;
+            justify-content: space-between;
+            width: 90%;
+            position: absolute;
+            top: 20px;
+        }
+        .side-box {
+            padding: 20px;
+            border-radius: 20px;
+            background: white;
+            border: 4px solid #0277bd;
+            width: 160px;
+            font-size: 1.2rem;
+        }
+        .active-box {
+            background-color: #ffff00;
+            transform: scale(1.1);
+            border-color: #ff6f00;
+        }
+        #feedback {
+            font-size: 28px;
+            margin-top: 20px;
+            min-height: 40px;
+            color: #444;
+        }
+        .correct-card { background-color: #c8e6c9 !important; }
+        .wrong-card { background-color: #ffcdd2 !important; }
+        
+        #start-btn {
+            position: fixed;
+            z-index: 100;
+            padding: 25px 50px;
+            font-size: 30px;
+            background: #ff6f00;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #bf360c;
+        }
+    </style>
+</head>
+<body>
+
+<button id="start-btn">TAP TO START</button>
+
+<div id="game-container">
+    <div class="instructions">
+        <div id="left-box" class="side-box">⬅️ TILT LEFT<br><strong>F or PH</strong></div>
+        <div id="right-box" class="side-box">TILT RIGHT ➡️<br><strong>GH</strong></div>
+    </div>
+
+    <div id="word-card">
+        <p id="emoji-display" class="emoji">❓</p>
+        <p id="word-display" class="word-reveal">Word</p>
+        <div id="feedback">Look at the picture!</div>
+    </div>
+
+    <video id="input-video" style="display:none;"></video>
+    <canvas id="camera-feed"></canvas>
+</div>
+
+<script>
+    const videoElement = document.getElementById('input-video');
+    const canvasElement = document.getElementById('camera-feed');
+    const canvasCtx = canvasElement.getContext('2d');
+    const wordCard = document.getElementById('word-card');
+    const startBtn = document.getElementById('start-btn');
+    
+    const quizItems = [
+        { word: "Fish", sound: "f", emoji: "🐟", hint: "F-F-Fish!" },
+        { word: "Phone", sound: "ph", emoji: "📱", hint: "PH sounds like F!" },
+        { word: "Laugh", sound: "gh", emoji: "😂", hint: "GH sounds like F!" },
+        { word: "Dolphin", sound: "ph", emoji: "🐬", hint: "PH in the middle!" },
+        { word: "Cough", sound: "gh", emoji: "😷", hint: "C-ou-GH!" },
+        { word: "Frog", sound: "f", emoji: "🐸", hint: "F-F-Frog!" }
+    ];
+
+    let currentIndex = 0;
+    let canAnswer = false;
+
+    function updateCard() {
+        const item = quizItems[currentIndex];
+        document.getElementById('emoji-display').innerText = item.emoji;
+        document.getElementById('word-display').innerText = item.word;
+        document.getElementById('word-display').style.visibility = "hidden"; // Hide word
+        document.getElementById('feedback').innerText = "What is the sound?";
+        wordCard.className = ""; 
+        canAnswer = true;
+    }
+
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.translate(canvasElement.width, 0);
+        canvasCtx.scale(-1, 1);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.restore();
+
+        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) return;
+
+        const landmarks = results.multiFaceLandmarks[0];
+        const leftEye = landmarks[33];
+        const rightEye = landmarks[263];
+
+        // Tilt Calculation
+        const tiltValue = rightEye.y - leftEye.y;
+
+        // Visual Highlight
+        document.getElementById('left-box').classList.toggle('active-box', tiltValue > 0.05);
+        document.getElementById('right-box').classList.toggle('active-box', tiltValue < -0.05);
+
+        if (canAnswer) {
+            if (tiltValue > 0.07) checkAnswer("left");
+            else if (tiltValue < -0.07) checkAnswer("right");
+        }
+    }
+
+    function checkAnswer(direction) {
+        canAnswer = false;
+        const item = quizItems[currentIndex];
+        const isF_PH = (item.sound === "f" || item.sound === "ph");
+        const isCorrect = (direction === "left" && isF_PH) || (direction === "right" && !isF_PH);
+
+        const feedback = document.getElementById('feedback');
+        const wordDisplay = document.getElementById('word-display');
+
+        if (isCorrect) {
+            feedback.innerText = "🌟 GREAT JOB! 🌟";
+            wordCard.classList.add("correct-card");
+        } else {
+            feedback.innerText = "❌ Keep practicing! ❌";
+            wordCard.classList.add("wrong-card");
+        }
+
+        // REVEAL the word and hint after answer
+        setTimeout(() => {
+            wordDisplay.style.visibility = "visible"; 
+            feedback.innerText = item.hint;
+            
+            setTimeout(() => {
+                currentIndex = (currentIndex + 1) % quizItems.length;
+                updateCard();
+            }, 2500);
+        }, 800);
+    }
+
+    const faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    faceMesh.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await faceMesh.send({image: videoElement});
+        },
+        width: 480,
+        height: 360
+    });
+    
+    startBtn.onclick = () => {
+        startBtn.style.display = 'none';
+        camera.start();
+        updateCard();
+    };
+
+    // ... (Keep your previous variables)
+
+    // Add a Start Overlay for iPhone users
+    const startButton = document.createElement('button');
+    startButton.innerText = "CLICK TO START GAME";
+    startButton.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); padding:20px; font-size:24px; z-index:100; border-radius:15px; background:#ff6f00; color:white; border:none; cursor:pointer;";
+    document.body.appendChild(startButton);
+
+    startButton.onclick = () => {
+        startButton.style.display = 'none';
+        camera.start(); // Start camera after user interaction
+        updateCard();
+    };
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await faceMesh.send({image: videoElement});
+        },
+        width: 480, // Lower resolution for smoother mobile performance
+        height: 360
+    });
+    
+    // Remove camera.start() from the bottom so it waits for the button!
+
